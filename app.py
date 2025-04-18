@@ -82,7 +82,6 @@ Media Count: {len(data.media)}
 
     headers = {"Content-Type": "application/json"}
 
-    # Call Gemini API
     response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
     result = response.json()
 
@@ -92,11 +91,8 @@ Media Count: {len(data.media)}
 
         raw_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-        # Clean the raw text to remove unwanted code block formatting
-        # Remove the '```json' and '```' markers
         cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
 
-        # Parse the cleaned text into JSON
         filters = json.loads(cleaned_text)
 
         if not isinstance(filters, list):
