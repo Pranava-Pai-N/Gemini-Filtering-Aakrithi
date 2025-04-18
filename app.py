@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Union, Dict
+from typing import List, Dict
 import requests
 import os
 import json
@@ -20,54 +20,75 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro-001:generateContent?key={GEMINI_API_KEY}"
+
+class RoutineItem(BaseModel):
+    time: str
+    content: str
 
 class InputData(BaseModel):
     title: str
     description: str
     media: List[str]
-    routines: Union[str, Dict[str, str]] = ""
+    routines: List[RoutineItem] = []
 
 CUSTOM_PROMPT = """
 You are an AI assistant specializing in content classification.
-Your task is to categorize a given post into one or more *predefined filters*.
+Your task is to analyze and categorize a given post into one or more predefined filters.
 
-First, check if the post includes title, description, and media (base64 or URL). If the post mentions a disease(eg:stress,viral fever,headache etc) or Ayurvedic medicine, return the name of the disease or Ayurvedic medicine first if more than one found return all the names. Then, if applicable, check for the following predefined filters and sub-filters:
+### Step-by-step Instructions:
 
+1. **Verify Post Structure**  
+   Ensure the post includes:
+   - A `title`
+   - A `description`
+   - At least one media item (either a base64-encoded string or a valid URL)
+
+2. **Check for Diseases**  
+   Identify whether the post explicitly mentions any disease (e.g., viral fever, acidity, stress, cancer, diabetes, etc.).  
+   → If found, extract and return the disease name in lowercase (e.g., `"cancer"`).  
+   → If the disease name contains multiple words, separate them with a single space.
+
+3. **Check for Ayurvedic Medicines**  
+   Look for mentions of specific Ayurvedic medicines (e.g., Ashwagandha, Brahmi, Neem, Triphala, etc.).  
+   → Return each medicine name in lowercase as a separate item in the result.
+
+4. **Apply Custom Filters (only if relevant)**  
+   Based on the content, classify the post using only the following filter keys:
 const categories = [
-    { value: 'herbs', give to frontend: 'Herbs & Remedies' },
-    { id: 'routines', label: 'Daily Routines' },
-    { id: 'wellnessTips', label: 'Wellness Tips' },
-    { id: 'diet', label: 'Diet & Nutrition' },
-    { id: 'yoga', label: 'Yoga & Pranayama' },
-    { id: 'detox', label: 'Detox & Cleansing' },
-    { id: 'seasonal', label: 'Seasonal Care' }
+    { value: "herbs", give to frontend: "Herbs & Remedies" },
+    { id: "routines", label: "Daily Routines" },
+    { id: "wellnessTips", label: "Wellness Tips" },
+    { id: "diet", label: "Diet & Nutrition" },
+    { id: "yoga", label: "Yoga & Pranayama" },
+    { id: "detox", label: "Detox & Cleansing" },
+    { id: "seasonal", label: "Seasonal Care" }
 ];
 
-*Give to frontend* means: return only the filter key/label in valid JSON format.
+### Output Format (STRICT)
+- Return a **flat JSON array** of strings.
+- Example valid output:
+["cancer", "ashwagandha", "herbs", "routines"]
 
-If none of the filters like disease, medicine, or sub-filters match, return the closest matching one from the above list.
-
-### Task Requirements
-1. If a disease or Ayurvedic medicine is mentioned, return its name first.
-2. After identifying any disease or Ayurvedic medicine, proceed to check the filters.
-3. Only use filters from the list above. Do NOT create new ones.
-4. Output must be strictly valid JSON — no extra text or markdown.
-5. Example valid response: ["herbs", "diet"]
-
-Give all output in valid JSON format without any additional text or explanation in lowercase.
+- Do NOT include:
+  - Markdown formatting
+  - Explanations
+  - Headers or bullet points
+  - Code blocks (like ```json)
 """
 
 @app.get("/")
-def read_root():
+async def root():
     return {"message": "Welcome to the AI Filter Generator!"}
+
 
 @app.post("/generate_filters")
 async def generate_filters(data: InputData):
+    formatted_routines = "\n".join([f"- {item.time}: {item.content}" for item in data.routines]) or "None"
     user_message = f"""
 Title: {data.title}
 Description: {data.description}
-Routines: {data.routines if data.routines else 'None'}
+Routines:\n{formatted_routines}
 Media Count: {len(data.media)}
 
 {CUSTOM_PROMPT}
@@ -91,8 +112,7 @@ Media Count: {len(data.media)}
 
         raw_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-        cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
-
+        cleaned_text = raw_text.strip("`json").strip("`").strip()
         filters = json.loads(cleaned_text)
 
         if not isinstance(filters, list):
